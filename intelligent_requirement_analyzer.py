@@ -1,19 +1,40 @@
 import os
+import traceback
+from pathlib import Path
+from urllib.parse import quote
+
 import gradio as gr
 
 from dotenv import load_dotenv
 from langchain_groq import ChatGroq
 from langchain_community.document_loaders import PyPDFLoader
 
-# Load environment variables
+# Folder this script lives in, so the assets folder is found no matter which
+# directory the app is started from.
+BASE_DIR = Path(__file__).resolve().parent
+ASSETS_DIR = BASE_DIR / "assets"
+
+# Load environment variables (GROQ_API_KEY comes from the .env file next to this script)
 load_dotenv()
 
-# Initialize LLM
-llm = ChatGroq(
-    api_key=os.getenv("GROQ_API_KEY"),
-    model="openai/gpt-oss-120b",
-    temperature=0
+GROQ_API_KEY = (os.getenv("GROQ_API_KEY") or "").strip()
+
+MISSING_KEY_MESSAGE = (
+    "GROQ_API_KEY is not set. Copy .env.example to .env, put your Groq API key "
+    "in it, then restart the app."
 )
+
+# Initialize LLM
+# ChatGroq() raises an error when there is no API key, which stops the whole app
+# from starting. So it is only created when a key is present; without one the page
+# still opens and the Status box says what is missing.
+llm = None
+if GROQ_API_KEY:
+    llm = ChatGroq(
+        api_key=GROQ_API_KEY,
+        model="openai/gpt-oss-120b",
+        temperature=0
+    )
 
 # Initial modules data for estimation fallback & interactivity
 # modules_data = [
@@ -69,27 +90,44 @@ def analyze_document(pdf_file):
             ""
         )
 
+    if llm is None:
+        return ("⚠️ " + MISSING_KEY_MESSAGE, "", "", "", "", "")
 
-    # Load PDF
-    loader = PyPDFLoader(pdf_file.name)
-    pages = loader.load()
-    document_text = "\n\n".join(page.page_content for page in pages)[:15000]
+    try:
+        # Load PDF
+        loader = PyPDFLoader(pdf_file.name)
+        pages = loader.load()
+        document_text = "\n\n".join(page.page_content for page in pages)[:15000]
 
-    # User Stories
-    stories = llm.invoke(f"You are a Senior Business Analyst. Analyze the requirement document and generate detailed User Stories (As a <user> I want <action> So that <benefit>):\n{document_text}").content
+        # User Stories
+        stories = llm.invoke(f"You are a Senior Business Analyst. Analyze the requirement document and generate detailed User Stories (As a <user> I want <action> So that <benefit>):\n{document_text}").content
 
-    # Acceptance Criteria
-    acceptance = llm.invoke(f"Generate Acceptance Criteria using the Given When Then format for:\n{document_text}").content
+        # Acceptance Criteria
+        acceptance = llm.invoke(f"Generate Acceptance Criteria using the Given When Then format for:\n{document_text}").content
 
-    # Test Cases
-    testcases = llm.invoke(f"Generate Functional Test Cases (ID, Scenario, Steps, Expected Result):\n{document_text}").content
+        # Test Cases
+        testcases = llm.invoke(f"Generate Functional Test Cases (ID, Scenario, Steps, Expected Result):\n{document_text}").content
 
-    # Risks
-    risks = llm.invoke(f"Identify Functional, Technical, Dependency, and Security Risks for:\n{document_text}").content
+        # Risks
+        risks = llm.invoke(f"Identify Functional, Technical, Dependency, and Security Risks for:\n{document_text}").content
 
-    # Effort Estimation
-    effort = llm.invoke(f"Estimate development effort (Module Name, Complexity, Story Points, Estimated Effort):\n{document_text}").content
-    
+        # Effort Estimation
+        effort = llm.invoke(f"Estimate development effort (Module Name, Complexity, Story Points, Estimated Effort):\n{document_text}").content
+
+    except Exception as error:
+        # Without this, Gradio only shows a generic "Error" and the real reason
+        # (rejected API key, rate limit, no connection, unreadable PDF, ...) is
+        # visible only in the terminal. Show it in the Status box as well.
+        traceback.print_exc()
+        return (
+            f"❌ Analysis failed - {type(error).__name__}: {error}",
+            "",
+            "",
+            "",
+            "",
+            ""
+        )
+
     status_msg = f"✅ PDF Loaded Successfully ({len(pages)} pages). Analysis Complete!"
     return (
         status_msg,
@@ -113,7 +151,7 @@ custom_css = """
         rgba(255,255,255,0.75),
         rgba(255,255,255,0.75)
     ),
-    url("file=assets/office_background.jpg");
+    url("BACKGROUND_IMAGE_URL");
 
     background-size: cover;
     background-position: center;
@@ -390,6 +428,14 @@ button.primary:active {
 
 """
 
+# Point the CSS at the background picture. Gradio serves local files at
+# /gradio_api/file=<path>, and only from folders listed in launch(allowed_paths=...)
+# at the bottom of this file. (The old url("file=assets/...") form was never served.)
+custom_css = custom_css.replace(
+    "BACKGROUND_IMAGE_URL",
+    "/gradio_api/file=" + quote((ASSETS_DIR / "office_background.jpg").as_posix()),
+)
+
 # UI with Clean Professional Layout
 with gr.Blocks(
     title="AI Requirement Analyzer",
@@ -407,7 +453,11 @@ with gr.Blocks(
         pdf_input = gr.File(label="Upload Requirement PDF (.pdf)", file_types=[".pdf"], scale=3)
         analyze_btn = gr.Button("🚀 Analyze Requirement", variant="primary", scale=1)
 
-    status_output = gr.Textbox(value="Ready to analyze document...", label="Status", interactive=False)
+    status_output = gr.Textbox(
+        value="Ready to analyze document..." if llm else "⚠️ " + MISSING_KEY_MESSAGE,
+        label="Status",
+        interactive=False
+    )
 
     with gr.Tabs():
         with gr.Tab("📖 User Stories"):
@@ -455,4 +505,8 @@ with gr.Blocks(
     
 
 if __name__ == "__main__":
-    demo.launch()
+    if llm is None:
+        print("WARNING: " + MISSING_KEY_MESSAGE)
+
+    # allowed_paths lets Gradio serve the background picture from the assets folder.
+    demo.launch(allowed_paths=[str(ASSETS_DIR)])
