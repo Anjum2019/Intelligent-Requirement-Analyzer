@@ -1,0 +1,19 @@
+# Everything needed to run the app:
+#
+#     pip install -r requirements.txt
+#     python intelligent_requirement_analyzer.py
+#
+# gradio is kept below 6 because the app is written for the Gradio 5 API: it
+# passes theme= and css= to gr.Blocks(). Gradio 6 moved both to launch(). On
+# Gradio 6.32.0 the app still starts and keeps its styling, but only through a
+# fallback that prints a warning on every start. To move to Gradio 6 properly,
+# pass theme= and css= to demo.launch() instead, then change this line.
+#
+# Checked together on 2026-11-14 (Python 3.11):
+#   gradio 5.50.0, python-dotenv 1.2.4, langchain-groq 1.1.3,
+#   langchain-community 0.4.2, pypdf 7.1.0
+gradio<6
+python-dotenv
+langchain-groq
+langchain-community
+pypdf
