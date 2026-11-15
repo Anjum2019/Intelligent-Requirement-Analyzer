@@ -17,3 +17,4 @@ python-dotenv
 langchain-groq
 langchain-community
 pypdf
+openpyxl

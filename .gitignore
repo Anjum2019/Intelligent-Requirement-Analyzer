@@ -13,6 +13,7 @@ venv/
 # Created when the code runs
 chroma_db/
 .gradio/
+exports/
 
 # OS files
 .DS_Store
