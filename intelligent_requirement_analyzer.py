@@ -19,9 +19,8 @@ from dotenv import load_dotenv
 from langchain_groq import ChatGroq
 from langchain_community.document_loaders import PyPDFLoader
 
-from exporters import build_csvs, build_excel
+from exporters import build_section_csv, build_section_excel
 from parsers import parse_acceptance_criteria, parse_test_cases, parse_user_stories
-import sample_data
 
 # Folder this script lives in, so the assets folder is found no matter which
 # directory the app is started from.
@@ -41,7 +40,7 @@ MISSING_KEY_MESSAGE = (
 
 # ChatGroq() raises an error when there is no API key, which stops the whole app
 # from starting. So it is only created when a key is present; without one the page
-# still opens (with sample data) and the Status box says what is missing.
+# still opens and the Status box says what is missing.
 llm = None
 if GROQ_API_KEY:
     llm = ChatGroq(api_key=GROQ_API_KEY, model=MODEL_NAME, temperature=0)
@@ -65,7 +64,7 @@ PARSERS = {
     "testcases": parse_test_cases,
 }
 
-PLACEHOLDER = "_No data yet — upload a PDF and run an analysis, or load the sample._"
+PLACEHOLDER = "_No data yet — please upload a PDF and run an analysis._"
 
 
 # ---------------------------------------------------------------------------
@@ -134,7 +133,7 @@ def _overview_md(state):
 
 ### Next steps
 1. Review each tab — tables are searchable, raw AI text is in the collapsible panel.
-2. Download the results with **Export to Excel** (Summary sheet + one sheet per section) or **Export to CSV** (one file per section).
+2. Download each section as Excel or CSV using the buttons in its tab.
 """
 
 
@@ -165,7 +164,6 @@ def _render_outputs(state, status_msg):
         outputs.append(_rows_to_lists(rows.get(key, []), keys))
         outputs.append(markdowns.get(key, "") or PLACEHOLDER)
     outputs.append(state)
-    outputs.append("Exports are ready — files appear below after you click an export button.")
     return tuple(outputs)
 
 
@@ -216,8 +214,11 @@ def analyze_document(pdf_file, project_name, sections, state):
     print("Button Clicked")
 
     if pdf_file is None:
-        msg = "⚠️ No file uploaded — choose a PDF first."
+        msg = "⚠️ Please upload a file (PDF) before starting an analysis."
         return _render_outputs(state, msg) if state else _empty_outputs(msg)
+
+    if not sections:
+        return _render_outputs(state, "⚠️ Select at least one section to generate.") if state else _empty_outputs("⚠️ Select at least one section to generate.")
 
     if llm is None:
         msg = "⚠️ " + MISSING_KEY_MESSAGE
@@ -237,7 +238,7 @@ def analyze_document(pdf_file, project_name, sections, state):
         markdowns = {}
         for key in SECTIONS:
             if key not in selected:
-                markdowns[key] = "_Not generated — this section was not selected._"
+                markdowns[key] = ""
                 continue
             markdowns[key] = llm.invoke(PROMPTS[key].format(text=document_text)).content
 
@@ -262,68 +263,42 @@ def analyze_document(pdf_file, project_name, sections, state):
     return _render_outputs(new_state, status_msg)
 
 
-def load_sample():
-    meta = dict(sample_data.SAMPLE_META)
-    meta["generated"] = datetime.now().strftime("%Y-%m-%d %H:%M")
-    markdowns = {
-        "stories": sample_data.SAMPLE_STORIES,
-        "acceptance": sample_data.SAMPLE_ACCEPTANCE,
-        "testcases": sample_data.SAMPLE_TESTCASES,
-    }
-    state = _build_state(meta, markdowns)
-    return _render_outputs(state, "👋 Sample analysis loaded (Loan Management System). Upload your own PDF to analyse it for real.")
-
 
 # ---------------------------------------------------------------------------
 # Exports
 # ---------------------------------------------------------------------------
 
-def export_excel(state):
-    if not state or not any(state.get("rows", {}).values()):
-        return None, "⚠️ Nothing to export yet — run an analysis or load the sample first."
+def export_section(state, section, file_format):
+    """Prepare a download for exactly one section, using all its rows."""
+    rows = (state or {}).get("rows", {}).get(section, [])
+    if not rows:
+        gr.Warning("No data in this section. Upload a PDF and generate it first.")
+        return gr.update(value=None, visible=False)
     try:
-        path = build_excel(state["rows"], state.get("meta", {}))
-        return path, f"✅ Excel workbook ready: {Path(path).name} (Summary + User Stories, Acceptance Criteria, Test Cases)."
+        builder = build_section_excel if file_format == "excel" else build_section_csv
+        path = builder(section, rows, state.get("meta", {}))
+        return gr.update(value=path, visible=True)
     except Exception as error:
         traceback.print_exc()
-        return None, f"❌ Excel export failed - {type(error).__name__}: {error}"
-
-
-def export_csv(state):
-    if not state or not any(state.get("rows", {}).values()):
-        return None, "⚠️ Nothing to export yet — run an analysis or load the sample first."
-    try:
-        paths = build_csvs(state["rows"], state.get("meta", {}))
-        if not paths:
-            return None, "⚠️ No data to export."
-        return paths, f"✅ {len(paths)} CSV file(s) ready — one per section. Click a file below to download."
-    except Exception as error:
-        traceback.print_exc()
-        return None, f"❌ CSV export failed - {type(error).__name__}: {error}"
+        gr.Warning(f"Export failed: {error}")
+        return gr.update(value=None, visible=False)
 
 
 # ---------------------------------------------------------------------------
-# Initial state: sample data so the workbench is realistic on first open
+# Each browser session starts empty; Gradio State holds results only in-session.
 # ---------------------------------------------------------------------------
 
-_initial_meta = dict(sample_data.SAMPLE_META)
-_initial_meta["generated"] = datetime.now().strftime("%Y-%m-%d %H:%M")
-initial_state = _build_state(_initial_meta, {
-    "stories": sample_data.SAMPLE_STORIES,
-    "acceptance": sample_data.SAMPLE_ACCEPTANCE,
-    "testcases": sample_data.SAMPLE_TESTCASES,
-})
+initial_state = _empty_state()
 _initial = _render_outputs(
     initial_state,
-    "👋 Showing sample analysis (Loan Management System). Upload a PDF and press "
-    "Analyze Requirement to analyse your own document."
+    "Please upload a PDF and press Analyze Requirement to get started."
     + ("" if llm else "  ·  " + MISSING_KEY_MESSAGE),
 )
 (_init_status, _init_kpi, _init_docinfo, _init_overview,
  _init_stories_df, _init_stories_md,
  _init_acceptance_df, _init_acceptance_md,
  _init_testcases_df, _init_testcases_md,
- _init_state, _init_export_status) = _initial
+ _init_state) = _initial
 
 _api_pill = ('<span class="pill pill-ok">● API connected</span>' if llm
              else '<span class="pill pill-warn">● API key not configured</span>')
@@ -338,7 +313,6 @@ header_html = f"""
     </div>
   </div>
   <div class="ira-header-right">
-    <span class="pill pill-model">Model: {MODEL_NAME} · Groq</span>
     {_api_pill}
   </div>
 </div>
@@ -380,7 +354,6 @@ custom_css = """
 .pill {
     font-size: 12px; font-weight: 700; border-radius: 999px; padding: 5px 12px;
 }
-.pill-model { background: rgba(255,255,255,0.18); color: #fff; }
 .pill-ok { background: #dcfce7; color: #166534; }
 .pill-warn { background: #fef3c7; color: #92400e; }
 
@@ -398,9 +371,9 @@ custom_css = """
 
 /* ---------- Panels ---------- */
 .block {
-    background: rgba(255,255,255,0.94) !important;
+    background: var(--block-background-fill) !important;
     border-radius: 16px !important;
-    border: 1px solid #e2e8f0 !important;
+    border: 1px solid var(--border-color-primary) !important;
     box-shadow: 0 4px 16px rgba(15,23,42,0.06) !important;
 }
 
@@ -426,15 +399,53 @@ button.secondary { border-radius: 12px !important; font-weight: 700 !important; 
 /* ---------- Tables & markdown ---------- */
 table { font-size: 13px; }
 table th { background: #0ea5e9 !important; color: #fff !important; font-weight: 700 !important; }
-table td { color: #1e293b !important; }
-.markdown { background: #fff !important; border-radius: 12px; padding: 14px; }
-.markdown p, .markdown li { color: #1e293b !important; }
+table td { color: var(--body-text-color) !important; background: var(--block-background-fill) !important; }
+.markdown { background: var(--block-background-fill) !important; border-radius: 12px; padding: 14px; }
+.markdown :is(p, li, h1, h2, h3, h4, strong, small),
+.prose :is(p, li, h1, h2, h3, h4, strong, small) {
+    color: var(--body-text-color) !important;
+}
 
 /* ---------- Status ---------- */
 textarea[readonly] {
-    background: #f0f9ff !important; color: #0f172a !important;
-    font-weight: 600 !important; border: 1px solid #bae6fd !important;
+    background: var(--input-background-fill) !important; color: var(--body-text-color) !important;
+    font-weight: 600 !important; border: 1px solid var(--border-color-primary) !important;
 }
+
+/* Match custom surfaces to Gradio's dark mode instead of mixing dark text
+   with light panels (Gradio applies .dark to an ancestor). */
+.dark .gradio-container {
+    background: linear-gradient(rgba(15,23,42,0.94), rgba(15,23,42,0.94)),
+                url("BACKGROUND_IMAGE_URL");
+    background-size: cover; background-position: center; background-attachment: fixed;
+}
+.dark .block, .dark .markdown {
+    background: #1e293b !important; border-color: #475569 !important;
+    color: #f1f5f9 !important;
+}
+.dark .markdown p, .dark .markdown li, .dark .markdown h1,
+.dark .markdown h2, .dark .markdown h3, .dark .markdown h4,
+.dark .markdown strong, .dark .markdown small,
+.dark .prose :is(p, li, h1, h2, h3, h4, strong, small),
+.dark label, .dark label span, .dark .block-title,
+.dark .file-preview, .dark .upload-container { color: #f1f5f9 !important; }
+.dark .gradio-container { color: #f1f5f9; }
+.dark input:not([type="checkbox"]):not([type="radio"]),
+.dark textarea, .dark select {
+    background: #0f172a !important; color: #f8fafc !important;
+    border-color: #64748b !important;
+}
+.dark input::placeholder, .dark textarea::placeholder { color: #cbd5e1 !important; opacity: 1; }
+.dark .upload-container, .dark .file-preview { background: #1e293b !important; border-color: #64748b !important; }
+.dark button.secondary { background: #334155 !important; color: #f8fafc !important; border-color: #64748b !important; }
+.dark .kpi-card { background: #1e293b; border-color: #475569; }
+.dark .kpi-value, .dark .kpi-label { color: #f1f5f9; }
+.dark .kpi-sub { color: #cbd5e1; }
+.dark [role="tab"] { background: #334155 !important; color: #f1f5f9 !important; }
+.dark [role="tab"][aria-selected="true"] { background: #0284c7 !important; color: #fff !important; }
+.dark table td { color: #f1f5f9 !important; background: #1e293b !important; }
+.gradio-container table th :is(strong, span) { color: #fff !important; }
+.dark textarea[readonly] { background: #1e3a5f !important; color: #f1f5f9 !important; border-color: #475569 !important; }
 
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-thumb { background: #7dd3fc; border-radius: 10px; }
@@ -463,7 +474,7 @@ with gr.Blocks(
     kpi_html = gr.HTML(_init_kpi)
 
     with gr.Row():
-        # ---------------- Left: input + options + export ----------------
+        # ---------------- Left: input + options ----------------
         with gr.Column(scale=1, min_width=300):
             with gr.Group():
                 gr.Markdown("### 1 · Upload Document")
@@ -483,35 +494,19 @@ with gr.Blocks(
                 sections_input = gr.CheckboxGroup(
                     label="Sections to generate",
                     choices=[
-                        ("stories", "📖 User Stories"),
-                        ("acceptance", "✅ Acceptance Criteria"),
-                        ("testcases", "🧪 Test Cases"),
+                        ("📖 User Stories", "stories"),
+                        ("✅ Acceptance Criteria", "acceptance"),
+                        ("🧪 Test Cases", "testcases"),
                     ],
                     value=["stories", "acceptance", "testcases"],
                 )
 
             analyze_btn = gr.Button("🚀 Analyze Requirement", variant="primary")
-            sample_btn = gr.Button("📋 Load Sample Analysis", variant="secondary")
+            clear_btn = gr.Button("🗑️ Clear results & upload a new file", variant="secondary")
 
             status_output = gr.Textbox(
                 value=_init_status, label="Status", interactive=False, lines=3,
             )
-
-            with gr.Group():
-                gr.Markdown("### 3 · Export Results")
-                excel_btn = gr.Button("📗 Export to Excel (.xlsx)", variant="primary")
-                excel_output = gr.File(label="Excel workbook", file_count="single")
-                csv_btn = gr.Button("📘 Export to CSV", variant="secondary")
-                csv_output = gr.File(label="CSV files (one per section)", file_count="multiple")
-                export_status = gr.Textbox(
-                    value=_init_export_status, label="Export status",
-                    interactive=False, lines=2,
-                )
-                gr.Markdown(
-                    "Excel = Summary sheet + User Stories, Acceptance Criteria and "
-                    "Test Cases sheets (formatted, filters on). "
-                    "CSV = one file per section, ready for Excel / Jira / TestRail."
-                )
 
         # ---------------- Right: results ----------------
         with gr.Column(scale=3):
@@ -520,6 +515,10 @@ with gr.Blocks(
                     overview_md = gr.Markdown(_init_overview)
 
                 with gr.Tab("📖 User Stories"):
+                    with gr.Row():
+                        stories_excel_btn = gr.Button("📗 Export to Excel (.xlsx)", variant="secondary")
+                        stories_csv_btn = gr.Button("📘 Export to CSV", variant="secondary")
+                    stories_download = gr.File(label="Download User Stories export", visible=False, interactive=False)
                     stories_search = gr.Textbox(
                         label="🔍 Search stories", placeholder="Filter rows…",
                     )
@@ -531,6 +530,10 @@ with gr.Blocks(
                         stories_md = gr.Markdown(_init_stories_md)
 
                 with gr.Tab("✅ Acceptance Criteria"):
+                    with gr.Row():
+                        acceptance_excel_btn = gr.Button("📗 Export to Excel (.xlsx)", variant="secondary")
+                        acceptance_csv_btn = gr.Button("📘 Export to CSV", variant="secondary")
+                    acceptance_download = gr.File(label="Download Acceptance Criteria export", visible=False, interactive=False)
                     acceptance_search = gr.Textbox(
                         label="🔍 Search criteria", placeholder="Filter rows…",
                     )
@@ -542,6 +545,10 @@ with gr.Blocks(
                         acceptance_md = gr.Markdown(_init_acceptance_md)
 
                 with gr.Tab("🧪 Test Cases"):
+                    with gr.Row():
+                        testcases_excel_btn = gr.Button("📗 Export to Excel (.xlsx)", variant="secondary")
+                        testcases_csv_btn = gr.Button("📘 Export to CSV", variant="secondary")
+                    testcases_download = gr.File(label="Download Test Cases export", visible=False, interactive=False)
                     testcases_search = gr.Textbox(
                         label="🔍 Search test cases", placeholder="Filter rows…",
                     )
@@ -552,12 +559,6 @@ with gr.Blocks(
                     with gr.Accordion("View raw AI output", open=False):
                         testcases_md = gr.Markdown(_init_testcases_md)
 
-    gr.Markdown(
-        "<small>Built with Gradio · Model: openai/gpt-oss-120b on Groq · "
-        "Only the first 15,000 characters of the PDF are analysed · "
-        "Exports are generated locally in the <code>exports/</code> folder.</small>"
-    )
-
     analysis_state = gr.State(value=_init_state)
 
     outputs = [
@@ -565,34 +566,46 @@ with gr.Blocks(
         stories_df, stories_md,
         acceptance_df, acceptance_md,
         testcases_df, testcases_md,
-        analysis_state, export_status,
+        analysis_state,
     ]
 
+    def analyze_and_reset_downloads(pdf_file, project_name, sections, state):
+        return (*analyze_document(pdf_file, project_name, sections, state),
+                *(gr.update(value=None, visible=False) for _ in SECTIONS), "", "", "")
+
     analyze_btn.click(
-        fn=analyze_document,
+        fn=analyze_and_reset_downloads,
         inputs=[pdf_input, project_input, sections_input, analysis_state],
-        outputs=outputs,
+        outputs=outputs + [stories_download, acceptance_download, testcases_download, stories_search,
+                           acceptance_search, testcases_search],
         show_progress="full",
     )
-    sample_btn.click(
-        fn=load_sample,
+    def clear_session():
+        # Clear visible downloads and filters as well as the per-session state.
+        return (*_empty_outputs("Results cleared. Please upload a file to begin."),
+                None, "", *(gr.update(value=None, visible=False) for _ in SECTIONS), "", "", "")
+
+    clear_btn.click(
+        fn=clear_session,
         inputs=[],
-        outputs=outputs,
+        outputs=outputs + [pdf_input, project_input, stories_download, acceptance_download, testcases_download,
+                           stories_search, acceptance_search, testcases_search],
         show_progress="minimal",
     )
 
-    excel_btn.click(
-        fn=export_excel,
-        inputs=[analysis_state],
-        outputs=[excel_output, export_status],
-        show_progress="minimal",
-    )
-    csv_btn.click(
-        fn=export_csv,
-        inputs=[analysis_state],
-        outputs=[csv_output, export_status],
-        show_progress="minimal",
-    )
+    for section, excel_button, csv_button, download in (
+        ("stories", stories_excel_btn, stories_csv_btn, stories_download),
+        ("acceptance", acceptance_excel_btn, acceptance_csv_btn, acceptance_download),
+        ("testcases", testcases_excel_btn, testcases_csv_btn, testcases_download),
+    ):
+        excel_button.click(
+            fn=lambda state, k=section: export_section(state, k, "excel"),
+            inputs=[analysis_state], outputs=[download], show_progress="minimal",
+        )
+        csv_button.click(
+            fn=lambda state, k=section: export_section(state, k, "csv"),
+            inputs=[analysis_state], outputs=[download], show_progress="minimal",
+        )
 
     # Per-tab search filters.
     for search, df, key in (
