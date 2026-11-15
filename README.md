@@ -1,18 +1,42 @@
 # Intelligent Requirement Analyzer
 
-Upload a requirements document (PDF) and get five drafts back, each in its own tab:
+Upload a requirements document (PDF) and get three structured drafts back —
+each as a searchable table plus the raw AI text, with one-click Excel / CSV
+export:
 
 | Tab | What you get |
 | --- | --- |
+| Overview | Project summary and counts |
 | User Stories | "As a … I want … so that …" stories |
 | Acceptance Criteria | Given / When / Then criteria |
 | Test Cases | ID, scenario, steps, expected result |
-| Risks | Functional, technical, dependency and security risks |
-| AI Effort Estimate | Modules with complexity, story points and effort |
 
 It is a [Gradio](https://www.gradio.app/) web app. It reads the PDF with LangChain's
 `PyPDFLoader` and sends the text to the `openai/gpt-oss-120b` model on
 [Groq](https://groq.com/).
+
+## The workbench UI
+
+- **Header + KPI strip** — model/API status, then live counts (pages, user
+  stories, acceptance criteria, test cases, total items) that update after
+  every analysis.
+- **Left panel, three steps** — (1) upload the PDF and name the project,
+  (2) choose which sections to generate, (3) export the results.
+- **Result tabs** — each section is a filterable table; the raw AI Markdown is
+  one click away in a collapsible panel.
+- **Sample data** — the app opens with a realistic sample analysis
+  (Loan Management System) so you can explore the UI and exports without an
+  API key. Press **Load Sample Analysis** to restore it any time.
+
+## Exporting results
+
+| Button | File | Contents |
+| --- | --- | --- |
+| **Export to Excel (.xlsx)** | One workbook | `Summary` sheet (project + counts) + `User Stories`, `Acceptance Criteria` and `Test Cases` sheets — frozen header row, auto-filters, wrapped text |
+| **Export to CSV** | One file per section | `user_stories`, `acceptance_criteria`, `test_cases` — UTF-8, ready for Excel / Jira / TestRail |
+
+Files are named `<Project>_analysis_<timestamp>.xlsx` (CSVs similarly) and
+saved in the local `exports/` folder (git-ignored).
 
 ## Setup
 
@@ -67,14 +91,14 @@ The full error is also printed in the terminal.
 ## Good to know
 
 - Only the first 15,000 characters of the PDF's text are analysed.
-- Each analysis sends five requests to Groq, one per tab, one after the other,
-  and each request contains the document text. Groq limits how much you can send
-  per minute, and the limit depends on your plan
+- Each analysis sends one request to Groq per selected section, one after the
+  other, and each request contains the document text. Groq limits how much you
+  can send per minute, and the limit depends on your plan
   (<https://console.groq.com/docs/rate-limits>). If a long document goes over
-  it, the Status box shows `RateLimitError`.
-- A scanned PDF (pictures of pages, no selectable text) gives the app nothing to
-  read. It still reports success, but the results are not based on your
-  document. Use a PDF with real text, or run OCR on it first.
+  it, the Status box shows `RateLimitError`. Untick sections you don't need to
+  save quota.
+- A scanned PDF (pictures of pages, no selectable text) is detected and
+  reported in the Status box. Use a PDF with real text, or run OCR on it first.
 - To change the page background, replace `assets/office_background.jpg`.
 
 ## What is in this repository
@@ -82,6 +106,9 @@ The full error is also printed in the terminal.
 | File | Purpose |
 | --- | --- |
 | `intelligent_requirement_analyzer.py` | The app: user interface and analysis. This is the file you run. |
+| `parsers.py` | Turns the model's Markdown into structured rows (tables, GWT). |
+| `exporters.py` | Builds the Excel workbook and CSV files (`openpyxl` + stdlib `csv`). |
+| `sample_data.py` | Realistic sample analysis shown on first open. |
 | `assets/office_background.jpg` | Background picture of the page. |
 | `requirements.txt` | Packages the app needs. |
 | `.env.example` | Template for your `.env` file. |
