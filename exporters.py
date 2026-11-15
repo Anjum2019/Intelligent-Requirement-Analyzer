@@ -144,3 +144,29 @@ def build_csvs(data, meta):
                 writer.writerow([row.get(k, "") for _, k in columns])
         paths.append(str(path))
     return paths
+
+
+def build_section_excel(section, rows, meta):
+    """Export only the requested section to a single-sheet workbook."""
+    from uuid import uuid4
+
+    title, columns, widths = SECTIONS[section]
+    wb = Workbook()
+    _write_sheet(wb.active, title, columns, rows, widths)
+    path = _ensure_dir() / f"{_slug(meta.get('project'))}_{title.lower().replace(' ', '_')}_{_stamp()}_{uuid4().hex[:8]}.xlsx"
+    wb.save(path)
+    return str(path)
+
+
+def build_section_csv(section, rows, meta):
+    """Export only the requested section to a UTF-8 CSV."""
+    from uuid import uuid4
+
+    title, columns, _ = SECTIONS[section]
+    path = _ensure_dir() / f"{_slug(meta.get('project'))}_{title.lower().replace(' ', '_')}_{_stamp()}_{uuid4().hex[:8]}.csv"
+    with path.open("w", newline="", encoding="utf-8-sig") as fh:
+        writer = csv.writer(fh)
+        writer.writerow([label for label, _ in columns])
+        for row in rows:
+            writer.writerow([row.get(key, "") for _, key in columns])
+    return str(path)

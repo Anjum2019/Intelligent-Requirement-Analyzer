@@ -17,26 +17,25 @@ It is a [Gradio](https://www.gradio.app/) web app. It reads the PDF with LangCha
 
 ## The workbench UI
 
-- **Header + KPI strip** — model/API status, then live counts (pages, user
+- **Header + KPI strip** — API status, then live counts (pages, user
   stories, acceptance criteria, test cases, total items) that update after
   every analysis.
-- **Left panel, three steps** — (1) upload the PDF and name the project,
-  (2) choose which sections to generate, (3) export the results.
+- **Left panel** — upload the PDF, name the project, and choose which sections to generate.
 - **Result tabs** — each section is a filterable table; the raw AI Markdown is
-  one click away in a collapsible panel.
-- **Sample data** — the app opens with a realistic sample analysis
-  (Loan Management System) so you can explore the UI and exports without an
-  API key. Press **Load Sample Analysis** to restore it any time.
+  one click away in a collapsible panel. Export buttons are in each section tab.
+- **Session results** — each new session starts empty. Results remain available
+  during the session until you click **Clear results & upload a new file**.
+  Clearing removes the upload, project name, results, filters and download links
+  from the interface; previously exported files remain in the local `exports/` folder.
 
 ## Exporting results
 
-| Button | File | Contents |
-| --- | --- | --- |
-| **Export to Excel (.xlsx)** | One workbook | `Summary` sheet (project + counts) + `User Stories`, `Acceptance Criteria` and `Test Cases` sheets — frozen header row, auto-filters, wrapped text |
-| **Export to CSV** | One file per section | `user_stories`, `acceptance_criteria`, `test_cases` — UTF-8, ready for Excel / Jira / TestRail |
-
-Files are named `<Project>_analysis_<timestamp>.xlsx` (CSVs similarly) and
-saved in the local `exports/` folder (git-ignored).
+Each User Stories, Acceptance Criteria, and Test Cases tab has its own
+**Export to Excel** and **Export to CSV** buttons. Each download contains all
+rows for that section, regardless of the current search filter. Click the file
+that appears to download it. Excel files contain a single formatted sheet;
+CSV files use UTF-8 with BOM. Files are saved in the local `exports/` folder
+(git-ignored).
 
 ## Setup
 
@@ -108,7 +107,7 @@ The full error is also printed in the terminal.
 | `intelligent_requirement_analyzer.py` | The app: user interface and analysis. This is the file you run. |
 | `parsers.py` | Turns the model's Markdown into structured rows (tables, GWT). |
 | `exporters.py` | Builds the Excel workbook and CSV files (`openpyxl` + stdlib `csv`). |
-| `sample_data.py` | Realistic sample analysis shown on first open. |
+| `sample_data.py` | Example data for development and testing (not loaded by the app). |
 | `assets/office_background.jpg` | Background picture of the page. |
 | `requirements.txt` | Packages the app needs. |
 | `.env.example` | Template for your `.env` file. |
